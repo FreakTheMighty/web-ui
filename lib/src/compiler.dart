@@ -7,9 +7,9 @@ library compiler;
 import 'dart:async';
 import 'dart:collection' show SplayTreeMap;
 import 'dart:json' as json;
-import 'package:analyzer_experimental/src/generated/ast.dart' show Directive;
+import 'package:analyzer_experimental/src/generated/ast.dart' show Directive, UriBasedDirective;
 import 'package:csslib/parser.dart' as css;
-import 'package:csslib/visitor.dart' show InfoVisitor, StyleSheet;
+import 'package:csslib/visitor.dart' show InfoVisitor, StyleSheet, treeToDebugString;
 import 'package:html5lib/dom.dart';
 import 'package:html5lib/parser.dart';
 
@@ -58,6 +58,7 @@ class Compiler {
   final List<OutputFile> output = <OutputFile>[];
 
   Path _mainPath;
+  Path _packageRoot;
   PathInfo _pathInfo;
   Messages _messages;
 
@@ -68,7 +69,7 @@ class Compiler {
 
   /** Information about source [files] given their href. */
   final Map<Path, FileInfo> info = new SplayTreeMap<Path, FileInfo>();
-  final _edits = new Map<LibraryInfo, TextEditTransaction>();
+  final _edits = new Map<DartCodeInfo, TextEditTransaction>();
 
  /**
   * Creates a compiler with [options] using [fileSystem].
@@ -83,12 +84,14 @@ class Compiler {
         options.baseDir != null ? new Path(options.baseDir) : mainDir;
     var outputPath =
         options.outputDir != null ? new Path(options.outputDir) : mainDir;
+    _packageRoot = options.packageRoot != null ? new Path(options.packageRoot)
+        : _mainPath.directoryPath.join(new Path('packages'));
 
     // Normalize paths - all should be relative or absolute paths.
     bool anyAbsolute = _mainPath.isAbsolute || basePath.isAbsolute ||
-        outputPath.isAbsolute;
+        outputPath.isAbsolute || _packageRoot.isAbsolute;
     bool allAbsolute = _mainPath.isAbsolute && basePath.isAbsolute &&
-        outputPath.isAbsolute;
+        outputPath.isAbsolute || _packageRoot.isAbsolute;
     if (anyAbsolute && !allAbsolute) {
       if (currentDir == null)  {
         _messages.error('internal error: could not normalize paths. Please '
@@ -100,6 +103,9 @@ class Compiler {
       if (!_mainPath.isAbsolute) _mainPath = currentPath.join(_mainPath);
       if (!basePath.isAbsolute) basePath = currentPath.join(basePath);
       if (!outputPath.isAbsolute) outputPath = currentPath.join(outputPath);
+      if (!_packageRoot.isAbsolute) {
+        _packageRoot = currentPath.join(_packageRoot);
+      }
     }
     _pathInfo = new PathInfo(basePath, outputPath, options.forceMangle);
   }
@@ -230,15 +236,16 @@ class Compiler {
   }
 
   Path _getDirectivePath(LibraryInfo libInfo, Directive directive) {
-    var uri = directive.uri.value;
+    var uriDirective = (directive as UriBasedDirective).uri;
+    var uri = uriDirective.value;
     if (uri.startsWith('dart:')) return null;
 
     if (uri.startsWith('package:')) {
       // Don't process our own package -- we'll implement @observable manually.
       if (uri.startsWith('package:web_ui/')) return null;
 
-      return _mainPath.directoryPath.join(new Path('packages'))
-          .join(new Path(uri.substring(8)));
+
+      return _packageRoot.join(new Path(uri.substring(8)));
     } else {
       return libInfo.inputPath.directoryPath.join(new Path(uri));
     }
@@ -256,7 +263,7 @@ class Compiler {
     for (var library in libraries) {
       var transaction = transformObservables(library.userCode);
       if (transaction != null) {
-        _edits[library] = transaction;
+        _edits[library.userCode] = transaction;
         if (transaction.hasEdits) {
           // TODO(jmesserly): what about ObservableList/Map/Set?
           _useObservers = true;
@@ -318,7 +325,7 @@ class Compiler {
       // So we only need to worry about other .dart files.
       if (lib.modified && lib is FileInfo &&
           lib.htmlFile == null && !lib.isEntryPoint) {
-        var transaction = _edits[lib];
+        var transaction = _edits[lib.userCode];
 
         // Save imports that were modified by _fixImports.
         for (var d in lib.userCode.directives) {
@@ -390,7 +397,7 @@ class Compiler {
       if (importInfo.modified) {
         // Use the generated URI for this file.
         newUri = _pathInfo.relativePath(library, importInfo).toString();
-      } else {
+      } else if (options.rewriteUrls) {
         // Get the relative path to the input file.
         newUri = _pathInfo.transformUrl(library.inputPath, directive.uri.value);
       }
@@ -430,7 +437,8 @@ class Compiler {
   void _emitMainDart(SourceFile file) {
     var fileInfo = info[file.path];
     var printer = new MainPageEmitter(fileInfo)
-        .run(file.document, _pathInfo, _edits[fileInfo]);
+        .run(file.document, _pathInfo, _edits[fileInfo.userCode],
+            options.rewriteUrls);
     _emitFileAndSourceMaps(fileInfo, printer, fileInfo.inputPath);
   }
 
@@ -484,7 +492,7 @@ class Compiler {
   void _emitComponents(FileInfo fileInfo) {
     for (var component in fileInfo.declaredComponents) {
       var printer = new WebComponentEmitter(fileInfo, _messages)
-          .run(component, _pathInfo, _edits[component]);
+          .run(component, _pathInfo, _edits[component.userCode]);
       _emitFileAndSourceMaps(component, printer, component.externalFile);
     }
   }
@@ -568,6 +576,12 @@ class _ProcessCss extends InfoVisitor {
     if (!info.cssSource.isEmpty) {
       info.styleSheet = _parseCss(info.cssSource.toString(), options);
       info.cssSource = null;    // Once CSS parsed original not needed.
+
+      if (options.debugCss) {
+        print('\nComponent: ${info.tagName}');
+        print('==========\n');
+        print(treeToDebugString(info.styleSheet));
+      }
     }
 
     super.visitComponentInfo(info);
