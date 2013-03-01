@@ -34,6 +34,16 @@ class CompilerOptions {
   /** Directory where all output will be generated. */
   final String outputDir;
 
+  /** Directory where to look for 'package:' imports. */
+  final String packageRoot;
+
+  /**
+   * Adjust resource URLs in the output HTML to point back to the original
+   * location in the file system. Commonly this is enabled during development,
+   * but disabled for deployment.
+   */
+  final bool rewriteUrls;
+
   /**
    * Whether to print error messages using the json format understood by the
    * Dart editor.
@@ -43,6 +53,9 @@ class CompilerOptions {
   // TODO(terry): Make polyfill the default maybe add --no_css_polyfill. */
   /** Emulate scoped styles using a CSS polyfill. */
   final bool processCss;
+
+  /** Emit debugging information for CSS processing. */
+  final bool debugCss;
 
   // We could make this faster, if it ever matters.
   factory CompilerOptions() => parse(['']);
@@ -54,12 +67,16 @@ class CompilerOptions {
       useColors = args['colors'],
       baseDir = args['basedir'],
       outputDir = args['out'],
+      packageRoot = args['package-root'],
+      rewriteUrls = args['rewrite-urls'],
       forceMangle = args['unique_output_filenames'],
       jsonFormat = args['json_format'],
       componentsOnly = args['components_only'],
-      processCss = args['process_css'],
+      processCss = args['css'],
+      debugCss = args['debug_css'],
       inputFile = args.rest.length > 0 ? args.rest[0] : null;
 
+  // TODO(sigmund): convert all flags to use dashes instead of underscores
   static CompilerOptions parse(List<String> arguments) {
     var parser = new ArgParser()
       ..addFlag('verbose', abbr: 'v')
@@ -69,6 +86,11 @@ class CompilerOptions {
           help: 'Warnings handled as errors',
           defaultsTo: false, negatable: false)
       ..addFlag('colors', help: 'Display errors/warnings in colored text',
+          defaultsTo: true)
+      ..addFlag('rewrite-urls',
+          help: 'Adjust every resource url to point to the original location in'
+          ' the filesystem. This on by default during development and can be '
+          ' disabled to make the generated code easier to deploy.',
           defaultsTo: true)
       ..addFlag('unique_output_filenames', abbr: 'u',
           help: 'Use unique names for all generated files, so they will not '
@@ -83,14 +105,16 @@ class CompilerOptions {
           help: 'Generate only the code for component classes, do not generate '
                 'HTML files or the main bootstrap code.',
           defaultsTo: false, negatable: false)
-      ..addFlag('process_css', help: 'Emulate scoped styles with CSS polyfill',
-          defaultsTo: false, negatable: false)
-      ..addFlag('dump_css', help: 'Display CSS tree',
+      ..addFlag('css', help: 'Emulate scoped styles with CSS polyfill',
+          defaultsTo: true)
+      ..addFlag('debug_css', help: 'Debug information for CSS polyfill',
           defaultsTo: false, negatable: false)
       ..addOption('out', abbr: 'o', help: 'Directory where to generate files'
           ' (defaults to the same directory as the source file)')
       ..addOption('basedir', help: 'Base directory where to find all source '
           'files (defaults to the source file\'s directory)')
+      ..addOption('package-root', help: 'Where to find "package:" imports'
+          '(defaults to the "packages/" subdirectory next to the source file)')
       ..addFlag('help', abbr: 'h', help: 'Displays this help message',
           defaultsTo: false, negatable: false);
     try {
