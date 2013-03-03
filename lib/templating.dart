@@ -535,11 +535,11 @@ abstract class PlaceholderTemplate extends Template {
     super.remove();
     var parent = node.parentNode;
     // TODO(sigmund): use `end.remove()` after dartbug.com/7173 is fixed
-    if (parent != null) {
-      for (var n in nodes) {
-        parent.$dom_removeChild(n);
-      }
-    }
+    // if (parent != null) {
+    //   for (var n in nodes) {
+    //     parent.$dom_removeChild(n);
+    //   }
+    // }
     nodes.clear();
   }
 }
